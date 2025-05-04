@@ -1,0 +1,363 @@
+<?php
+session_start();
+
+if (!isset($_SESSION['firstname']) || !isset($_SESSION['lastname'])) {
+    echo "Name information is missing. Please log in again.";
+    exit();
+}
+  
+$firstname = $_SESSION['firstname'];
+$lastname = $_SESSION['lastname'];
+
+include 'db_connection.php';
+
+if (!isset($_SESSION['user_id'])) {
+    die("Not logged in.");
+}
+
+$userId = $_SESSION['user_id'];
+
+// Handle diary form submission
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['diary_entry'])) {
+    $entry = $_POST['diary_entry'];
+    $stmt = $conn->prepare("INSERT INTO personal_diary (user_id, entry) VALUES (?, ?)");
+    $stmt->bind_param("is", $userId, $entry);
+    $stmt->execute();
+    $stmt->close();
+}
+
+// Handle diary entry deletion
+if (isset($_GET['delete_entry_id'])) {
+    $entryId = $_GET['delete_entry_id'];
+    $stmt = $conn->prepare("DELETE FROM personal_diary WHERE user_id = ? AND id = ?");
+    $stmt->bind_param("ii", $userId, $entryId);
+    $stmt->execute();
+    $stmt->close();
+    header("Location: user_library.php");  // Redirect to avoid resubmission on refresh
+    exit();
+}
+
+// Fetch mood notes
+$moodNotes = [];
+$result = $conn->query("SELECT note, timestamp FROM mood_tracking WHERE user_id = $userId AND note IS NOT NULL ORDER BY timestamp DESC");
+while ($row = $result->fetch_assoc()) {
+    $moodNotes[] = $row;
+}
+
+// Fetch personal diary entries
+$diaryEntries = [];
+$result = $conn->query("SELECT id, entry, timestamp FROM personal_diary WHERE user_id = $userId ORDER BY timestamp DESC");
+while ($row = $result->fetch_assoc()) {
+    $diaryEntries[] = $row;
+}
+
+$conn->close();
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Library</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="newstyle.css">
+    <link rel="stylesheet" href="responsive.css">
+    <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/main.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+      html {
+        scroll-behavior: smooth;
+      }
+
+      .library-bg {
+        background-color: #ececec;
+        background-image:  linear-gradient(rgba(68,76,247,0.3) 2px, transparent 2px), linear-gradient(90deg, rgba(68,76,247,0.3) 2px, transparent 2px), linear-gradient(rgba(68,76,247,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(68,76,247,0.5) 1px,rgba(229, 229, 247, 0) 1px);
+        background-size: 300px 300px, 300px 300px, 100px 100px, 100px 100px;
+        background-position: -2px -2px, -2px -2px, -1px -1px, -1px -1px;
+      }
+
+      .library-content {
+        position: relative;
+        z-index: 1;
+      }
+
+      .resource-bg {
+        /*background: linear-gradient(to right, #d4d4d4, #ffffff);
+        background: linear-gradient(135deg,rgba(68, 76, 247, 0.19) 25%, transparent 25%) -25px 0/ 50px 50px, linear-gradient(225deg,rgba(68, 77, 247, 0.4) 25%, transparent 25%) -25px 0/ 50px 50px, linear-gradient(315deg,rgba(68, 77, 247, 0.19) 25%, transparent 25%) 0px 0/ 50px 50px, linear-gradient(45deg,rgba(68, 77, 247, 0.4) 25%,rgba(229, 229, 247, 0) 25%) 0px 0/ 50px 50px;
+        */
+        background-color: #023e8a; 
+      }
+
+.library-wrapper {
+  display: flex;
+  gap: 30px;
+  padding: 40px;
+  max-width: 100%;
+  margin: auto;
+}
+
+.library-left,
+.library-right {
+  flex: 1;
+  background: #fff;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.library-left {
+  max-width: 75%;
+}
+
+.library-right {
+  max-width: 25%;
+}
+
+.library-left h3,
+.library-right h3 {
+  font-size: 22px;
+  color: #2c3e50;
+  margin-bottom: 15px;
+}
+
+.note-card {
+  background-color: #edf2fb;
+  padding: 15px 20px;
+  border-radius: 10px;
+  margin-bottom: 15px;
+  border-left: 4px solid #abc4ff;
+}
+
+.note-card h4 {
+  margin: 0 0 5px;
+  font-size: 16px;
+  color: #555;
+}
+
+.note-card p {
+  margin: 0;
+  font-size: 15px;
+  color: #333;
+}
+
+.notepad-container {
+  margin-top: 12px;
+  margin-bottom: 12px;
+  padding: 20px;
+  background-color: #fefefe;
+  border-radius: 12px;
+  border: 1px solid #ddd;
+}
+
+.add-entry-button {
+  display: inline-block;
+  padding: 10px 20px;
+  background-color: #2c3e50;
+  color: white;
+  text-decoration: none;
+  border-radius: 8px;
+  font-weight: bold;
+  transition: background-color 0.3s ease;
+}
+
+.add-entry-button:hover {
+  background-color: #2980b9;
+}
+
+/* Add delete button styling */
+.delete-button {
+    background-color: #e74c3c;
+    color: white;
+    margin-top: -45px;
+    padding: 2px 10px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    float: right;
+}
+
+.delete-button:hover {
+    background-color: #c0392b;
+}
+/* Responsive Code */
+/* ===== Library Section ===== */
+@media screen and (max-width: 768px) {
+    .library-wrapper {
+        flex-direction: column;
+        padding: 20px;
+    }
+
+    .library-left,
+    .library-right {
+        width: 100%;
+        max-width: 100%;
+        margin-bottom: 20px;
+    }
+
+    .library-left h3,
+    .library-right h3 {
+        text-align: center;
+    }
+
+    .add-entry-button {
+        width: 100%;
+        text-align: center;
+        padding: 12px;
+    }
+
+    .note-card {
+        font-size: 15px;
+    }
+
+    .delete-button {
+        font-size: 12px;
+        margin-top: -30px;
+    }
+}
+
+@media screen and (max-width: 480px) {
+    .note-card h4 {
+        font-size: 14px;
+    }
+
+    .note-card p {
+        font-size: 13px;
+    }
+
+    .add-entry-button {
+        font-size: 14px;
+    }
+}
+
+  
+
+  </style>
+</head>
+<body>
+
+
+<!-- New Header Above Navbar -->
+<div class="top-header">
+    <div class="left-side">
+      <div style="display: flex; align-items: center; gap: 8px;">
+          <img src="img/logo white.png" alt="Logo" class="app-logo">
+          <h2 class="app-title">BreatheWell</h2>
+      </div>
+    </div>
+
+    <div class="right-side">
+        <ul class="navbar-links">
+            <li><a href="#">About Us</a></li>
+        </ul>
+    </div>
+</div>    
+
+<!-- Top Navbar -->
+<div class="top-navbar">
+  <div class="left-side">
+    <ul class="navbar-links">
+      <li><a href="user.php#home">Home</a></li>
+      <li><a href="user.php#resources">Resources</a></li>
+      <li><a href="user.php#myday">My Day</a></li>
+      <li><a href="user.php#assessment">Assessment</a></li>
+      <li><a href="user.php#library">Library</a></li>
+      <li><a href="user.php#hotlines">Hotlines</a></li>
+    </ul>
+  </div>
+
+  <div class="right-side">
+    <div class="icon-group">
+
+        <!-- Help icon stays -->
+        <a href="inquiry.php" title="Ask a Question">
+            <span class="material-icons">help_outline</span>
+        </a>
+
+        <!-- Existing profile icon and dropdown -->
+
+        <a href="profile.php" title="View Profile">
+            <span class="material-icons">person</span>
+        </a>
+
+        <div class="dropdown">
+            <span class="material-icons dropdown-toggle" onclick="toggleSettingsDropdown()" title="Settings">settings</span>
+
+            <div id="settingsDropdown" class="dropdown-menu">
+                <ul>
+                  <li>
+                    <a href="toggle_otp.php">
+                      <?= ($_SESSION['otp_enabled'] ?? 1) ? "Turn off OTP" : "Enable OTP" ?>
+                    </a>
+                  </li>
+                  <li><a href="change_pass.php">Change Password</a></li>
+                  <li><a href="login.php">Logout</a></li>
+                </ul>
+            </div>
+        </div>
+
+    </div>
+  </div>
+
+</div>
+<!-- End of Navbar -->
+
+
+<section id="library" class="library-bg">
+  <div class="library-content">
+<div class="library-wrapper">
+  <!-- Left: Mood Notes -->
+  <div class="library-left">
+    <h3>Mood Notes</h3>
+    <?php foreach ($moodNotes as $note): ?>
+      <div class="note-card">
+        <h4><?php echo date("F j, Y g:i A", strtotime($note['timestamp'])); ?></h4>
+        <p><?php echo htmlspecialchars($note['note']); ?></p>
+      </div>
+    <?php endforeach; ?>
+  </div>
+
+  <!-- Right: Diary + Entry -->
+  <div class="library-right">
+    <h3>Personal Diary</h3>
+
+    <div class="notepad-container">
+        <a href="add_diary_entry.php" class="add-entry-button">Add a Diary Entry</a>
+    </div>
+
+    <?php foreach ($diaryEntries as $entry): ?>
+      <div class="note-card">
+        <h4><?php echo date("F j, Y g:i A", strtotime($entry['timestamp'])); ?></h4>
+        <p><?php echo htmlspecialchars($entry['entry']); ?></p>
+        <a href="?delete_entry_id=<?php echo $entry['id']; ?>" class="delete-button" onclick="return confirm('Are you sure you want to delete this entry?');">x</a>
+      </div>
+    <?php endforeach; ?>
+
+  </div>
+</div>
+    </section>
+
+<script>
+  // Function to toggle the dropdown menu
+  function toggleSidebar() {
+    const dropdownMenu = document.getElementById('dropdownMenu');
+    
+    // Toggle the display of the dropdown menu
+    dropdownMenu.style.display = (dropdownMenu.style.display === 'block') ? 'none' : 'block';
+  }
+  
+  // Close the dropdown menu if user clicks outside of it
+  window.onclick = function(event) {
+    const dropdownMenu = document.getElementById('dropdownMenu');
+    const burgerIcon = document.querySelector('.burger-icon');
+    
+    if (!dropdownMenu.contains(event.target) && !burgerIcon.contains(event.target)) {
+      dropdownMenu.style.display = 'none';
+    }
+  }
+</script>
+
+</body>
+</html>
